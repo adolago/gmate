@@ -1,0 +1,39 @@
+[
+  {
+    "section": "QUANTITATIVE_REASONING",
+    "questionType": "PROBLEM_SOLVING",
+    "subsection": "Algebra",
+    "difficulty": "MEDIUM",
+    "stem": "If x + y = 8 and x - y = 2, what is the value of x?",
+    "options": [
+      { "label": "A", "text": "3" },
+      { "label": "B", "text": "4" },
+      { "label": "C", "text": "5" },
+      { "label": "D", "text": "6" },
+      { "label": "E", "text": "7" }
+    ],
+    "correctAnswer": "C",
+    "explanation": "Adding the two equations: 2x = 10, so x = 5.",
+    "tags": ["linear-equations", "systems"],
+    "ogPage": 152
+  },
+  {
+    "section": "VERBAL_REASONING",
+    "questionType": "CRITICAL_REASONING",
+    "subsection": "Critical Reasoning",
+    "difficulty": "HARD",
+    "stem": "REPLACE WITH ACTUAL QUESTION FROM THE OFFICIAL GUIDE",
+    "passage": "Optional passage text for RC questions",
+    "options": [
+      { "label": "A", "text": "Option A text" },
+      { "label": "B", "text": "Option B text" },
+      { "label": "C", "text": "Option C text" },
+      { "label": "D", "text": "Option D text" },
+      { "label": "E", "text": "Option E text" }
+    ],
+    "correctAnswer": "B",
+    "explanation": "Detailed explanation of why B is correct.",
+    "tags": ["weaken", "argument-structure"],
+    "ogPage": 420
+  }
+]

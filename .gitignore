@@ -33,6 +33,9 @@ yarn-error.log*
 # env files (can opt-in for committing if needed)
 .env*
 
+# Copyrighted question data (Official Guide, etc.)
+data/official-questions.json
+
 # vercel
 .vercel
 
