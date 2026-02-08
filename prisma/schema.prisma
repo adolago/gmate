@@ -1,0 +1,251 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────
+
+enum Section {
+  QUANTITATIVE_REASONING
+  VERBAL_REASONING
+  DATA_INSIGHTS
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum QuestionType {
+  // Quantitative Reasoning
+  PROBLEM_SOLVING
+  // Verbal Reasoning
+  READING_COMPREHENSION
+  CRITICAL_REASONING
+  // Data Insights
+  DATA_SUFFICIENCY
+  MULTI_SOURCE_REASONING
+  TABLE_ANALYSIS
+  GRAPHICS_INTERPRETATION
+  TWO_PART_ANALYSIS
+}
+
+enum MasteryStage {
+  UNKNOWN      // 0.0
+  INTRODUCED   // 0.1
+  DEVELOPING   // 0.3
+  PROFICIENT   // 0.5
+  MASTERED     // 0.75
+  FLUENT       // 0.9
+}
+
+enum ErrorType {
+  CONCEPTUAL
+  PROCEDURAL
+  CARELESS
+  KNOWLEDGE_GAP
+}
+
+enum SessionType {
+  PRACTICE
+  REVIEW
+  EXAM_SIM
+  WARMUP
+}
+
+enum SessionStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+enum ChatRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+// ─── Knowledge Graph ─────────────────────────────────────────────────
+
+model Topic {
+  id            String   @id @default(cuid())
+  name          String
+  section       Section
+  description   String?
+
+  // Self-referential parent for hierarchy (e.g. Algebra → Linear Equations)
+  parentId      String?
+  parent        Topic?   @relation("TopicHierarchy", fields: [parentId], references: [id])
+  children      Topic[]  @relation("TopicHierarchy")
+
+  // Prerequisite DAG (many-to-many)
+  prerequisites     Topic[] @relation("TopicPrerequisites")
+  prerequisiteOf    Topic[] @relation("TopicPrerequisites")
+
+  // Relations
+  questions     Question[]
+  mastery       TopicMastery?
+  reviewQueue   ReviewQueue?
+
+  createdAt     DateTime @default(now())
+
+  @@unique([name, section])
+  @@index([section])
+}
+
+// ─── Questions ───────────────────────────────────────────────────────
+
+model Question {
+  id            String       @id @default(cuid())
+  section       Section
+  questionType  QuestionType
+  subsection    String       // e.g., "Algebra", "Inference"
+  difficulty    Difficulty
+  stem          String       // Question text (markdown)
+  passage       String?      // Reading passage (for RC, MSR)
+  options       Json         // [{label: "A", text: "..."}, ...]
+  correctAnswer String       // Label of correct option
+  explanation   String       // Detailed explanation (markdown)
+  tags          String[]     // e.g., ["percentages", "ratios"]
+  imageUrl      String?      // Optional diagram/chart
+  tableData     Json?        // For Table Analysis questions
+  sourceSet     Json?        // For Multi-Source Reasoning
+
+  // Topic relation
+  topicId       String?
+  topic         Topic?       @relation(fields: [topicId], references: [id])
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  attempts         Attempt[]
+  sessionQuestions SessionQuestion[]
+  chatMessages     ChatMessage[]
+
+  @@index([section, difficulty])
+  @@index([section, questionType])
+  @@index([topicId])
+}
+
+// ─── Attempts ────────────────────────────────────────────────────────
+
+model Attempt {
+  id             String     @id @default(cuid())
+  questionId     String
+  question       Question   @relation(fields: [questionId], references: [id])
+  selectedAnswer String
+  isCorrect      Boolean
+  timeSpentMs    Int
+  errorType      ErrorType?       // Classified after wrong answer
+  scaffoldLevel  Int        @default(1) // 1-4
+  hintsUsed      Int        @default(0)
+
+  sessionId      String?
+  session        StudySession? @relation(fields: [sessionId], references: [id])
+
+  createdAt      DateTime   @default(now())
+
+  @@index([questionId])
+  @@index([sessionId])
+  @@index([createdAt])
+}
+
+// ─── Study Sessions ──────────────────────────────────────────────────
+
+model StudySession {
+  id              String        @id @default(cuid())
+  sessionType     SessionType
+  section         Section?      // Null for mixed-section
+  questionType    QuestionType? // Null for mixed-type
+  difficulty      Difficulty?   // Null for mixed-difficulty
+  totalQuestions  Int
+  timeLimitMs     Int           // Total session time in ms
+  status          SessionStatus @default(IN_PROGRESS)
+
+  correctCount    Int           @default(0)
+  totalTimeMs     Int           @default(0)
+
+  startedAt       DateTime      @default(now())
+  finishedAt      DateTime?
+
+  attempts         Attempt[]
+  sessionQuestions SessionQuestion[]
+
+  @@index([status])
+  @@index([startedAt])
+}
+
+// ─── Session Questions (ordered join table) ──────────────────────────
+
+model SessionQuestion {
+  id          String       @id @default(cuid())
+  sessionId   String
+  session     StudySession @relation(fields: [sessionId], references: [id])
+  questionId  String
+  question    Question     @relation(fields: [questionId], references: [id])
+  orderIndex  Int
+
+  @@unique([sessionId, questionId])
+  @@unique([sessionId, orderIndex])
+  @@index([sessionId])
+}
+
+// ─── Topic Mastery (Learning Engine) ─────────────────────────────────
+
+model TopicMastery {
+  id              String       @id @default(cuid())
+  topicId         String       @unique
+  topic           Topic        @relation(fields: [topicId], references: [id])
+  masteryLevel    Float        @default(0.0)  // 0.0 - 1.0
+  masteryStage    MasteryStage @default(UNKNOWN)
+  practiceCount   Int          @default(0)
+  lastPracticedAt DateTime?
+  accuracy7d      Float        @default(0.0)  // Rolling 7-day accuracy
+  accuracy30d     Float        @default(0.0)  // Rolling 30-day accuracy
+  avgTimeMs       Int          @default(0)
+  stabilityFactor Float        @default(1.0)  // Ebbinghaus S parameter
+  nextReviewAt    DateTime?
+  notes           String?
+
+  @@index([masteryStage])
+  @@index([nextReviewAt])
+}
+
+// ─── Review Queue (Spaced Repetition) ────────────────────────────────
+
+model ReviewQueue {
+  id           String   @id @default(cuid())
+  topicId      String   @unique
+  topic        Topic    @relation(fields: [topicId], references: [id])
+  urgency      Float    @default(0.0)  // (1 - retention) * overdueFactor
+  scheduledAt  DateTime
+  intervalMs   Int      @default(14400000) // Default 4 hours
+
+  @@index([urgency])
+  @@index([scheduledAt])
+}
+
+// ─── Chat Messages (AI Companion) ────────────────────────────────────
+
+model ChatMessage {
+  id             String    @id @default(cuid())
+  role           ChatRole
+  content        String
+  questionId     String?
+  question       Question? @relation(fields: [questionId], references: [id])
+  section        Section?
+  sessionId      String?
+  scaffoldLevel  Int?      // 1-4
+  metadata       Json?     // Full context for Tinker training export
+
+  createdAt      DateTime  @default(now())
+
+  @@index([questionId])
+  @@index([sessionId])
+  @@index([createdAt])
+}
