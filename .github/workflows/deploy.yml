@@ -1,0 +1,124 @@
+name: Deploy GMATE
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Set these in your repository's Settings > Secrets and variables > Actions
+#   Variables: SITE_DOMAIN, SSH_HOSTNAME, DEPLOY_USER
+#   Secrets: DMZ_GATEWAY_SSH_KEY, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
+      SSH_HOSTNAME: ${{ vars.SSH_HOSTNAME }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
+      CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cloudflared
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o cloudflared.deb
+          sudo dpkg -i cloudflared.deb
+
+      - name: Deploy via Cloudflare Access (SSH)
+        run: |
+          set -euo pipefail
+
+          # Write deploy key
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DMZ_GATEWAY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Configure SSH client to use local tunnel port
+          printf '%s\n' \
+            'Host dmz-gateway' \
+            '  HostName localhost' \
+            '  Port 2222' \
+            "  User $DEPLOY_USER" \
+            '  IdentityFile ~/.ssh/deploy_key' \
+            '  IdentitiesOnly yes' \
+            '  StrictHostKeyChecking no' \
+            '  UserKnownHostsFile /dev/null' >> ~/.ssh/config
+
+          # Start Cloudflare Access TCP tunnel
+          step_ok=0
+          CF_PID=""
+          cleanup() {
+            if [ -n "${CF_PID}" ]; then
+              kill "${CF_PID}" 2>/dev/null || true
+            fi
+            if [ "${step_ok}" -eq 0 ]; then
+              echo "---- cloudflared log (last 200 lines) ----"
+              tail -200 /tmp/cloudflared.log 2>/dev/null || true
+            fi
+          }
+          trap cleanup EXIT
+
+          echo "Starting Cloudflare Access TCP tunnel..."
+          cloudflared access tcp \
+            --hostname "$SSH_HOSTNAME" \
+            --url localhost:2222 \
+            --service-token-id "$CF_ACCESS_CLIENT_ID" \
+            --service-token-secret "$CF_ACCESS_CLIENT_SECRET" \
+            --loglevel debug \
+            --logfile /tmp/cloudflared.log &
+          CF_PID=$!
+
+          echo "Testing SSH connection through tunnel..."
+          tunnel_ok=0
+          for i in {1..12}; do
+            if ssh -o ConnectTimeout=20 dmz-gateway 'echo "Connection OK"'; then
+              tunnel_ok=1
+              echo "Tunnel is ready"
+              break
+            fi
+            echo "Attempt $i failed, retrying in 5s..."
+            sleep 5
+          done
+
+          if [ "$tunnel_ok" -ne 1 ]; then
+            echo "Failed to establish tunnel connection"
+            exit 1
+          fi
+
+          echo "Uploading application files..."
+          tar -czf - \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude '.gitignore' \
+            --exclude 'node_modules' \
+            --exclude '.env' \
+            --exclude '.next' \
+            . | ssh dmz-gateway 'sudo tar xzf - -C /opt/gmate --strip-components=0'
+
+          echo "Installing dependencies..."
+          ssh dmz-gateway 'cd /opt/gmate && sudo chown -R artur:artur /opt/gmate && npm ci'
+
+          echo "Generating Prisma client..."
+          ssh dmz-gateway 'cd /opt/gmate && npx prisma generate'
+
+          echo "Running database migrations..."
+          ssh dmz-gateway 'cd /opt/gmate && npx prisma migrate deploy'
+
+          echo "Building application..."
+          ssh dmz-gateway 'cd /opt/gmate && npm run build'
+
+          echo "Restarting service..."
+          ssh dmz-gateway 'sudo systemctl restart gmate'
+
+          step_ok=1
+
+      - name: Health check
+        run: |
+          for i in {1..30}; do
+            if curl -sf -L "https://$SITE_DOMAIN/" > /dev/null; then
+              echo "Site online at https://$SITE_DOMAIN"; exit 0; fi
+            sleep 2
+          done
+          echo "Site did not become reachable in time" >&2; exit 1
