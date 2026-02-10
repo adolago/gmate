@@ -52,9 +52,16 @@ export default function QuestionPage() {
     isCorrect: boolean;
     correctAnswer: string;
     explanation: string;
+    next?: { questionId: string; topicName: string; reason: string; taskType: string } | null;
+    masteryUpdate?: { newMasteryLevel: number; newMasteryStage: string; scaffoldLevel: number };
   } | null>(null);
   const [startTime] = useState(Date.now());
   const [loading, setLoading] = useState(true);
+  const [topicMastery, setTopicMastery] = useState<{
+    masteryLevel: number;
+    accuracy7d: number;
+    practiceCount: number;
+  } | null>(null);
 
   // Fetch question data
   useEffect(() => {
@@ -66,6 +73,23 @@ export default function QuestionPage() {
       })
       .catch(() => setLoading(false));
   }, [id]);
+
+  // Fetch real mastery data for this question's topic
+  useEffect(() => {
+    if (!question?.topic?.id) return;
+    fetch(`/api/mastery?topicId=${question.topic.id}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data) {
+          setTopicMastery({
+            masteryLevel: data.masteryLevel ?? 0,
+            accuracy7d: data.accuracy7d ?? 0,
+            practiceCount: data.practiceCount ?? 0,
+          });
+        }
+      })
+      .catch(() => {});
+  }, [question?.topic?.id]);
 
   // Update AI sidebar context when question loads
   useEffect(() => {
@@ -85,12 +109,15 @@ export default function QuestionPage() {
       passage: question.passage,
     });
 
-    // Set student context (simplified — in production this comes from mastery API)
+    const mastery = topicMastery?.masteryLevel ?? 0;
+    const accuracy = topicMastery?.accuracy7d ?? 0;
+    const practice = topicMastery?.practiceCount ?? question.attempts.length;
+
     setStudent({
-      masteryLevel: 0.3, // Default — will be fetched from API
-      scaffoldLevel: getScaffoldLevel(0.3),
-      accuracy7d: 0,
-      practiceCount: question.attempts.length,
+      masteryLevel: mastery,
+      scaffoldLevel: getScaffoldLevel(mastery, accuracy, practice),
+      accuracy7d: accuracy,
+      practiceCount: practice,
       topicName: question.topic?.name || question.subsection,
     });
 
@@ -98,7 +125,7 @@ export default function QuestionPage() {
       setQuestion(null);
       setStudent(null);
     };
-  }, [question, submitted, setQuestion, setStudent]);
+  }, [question, submitted, topicMastery, setQuestion, setStudent]);
 
   const handleSubmit = useCallback(async () => {
     if (!selected || !question) return;
@@ -114,7 +141,11 @@ export default function QuestionPage() {
           questionId: question.id,
           selectedAnswer: selected,
           timeSpentMs,
-          scaffoldLevel: getScaffoldLevel(0.3),
+          scaffoldLevel: getScaffoldLevel(
+            topicMastery?.masteryLevel ?? 0,
+            topicMastery?.accuracy7d ?? null,
+            topicMastery?.practiceCount ?? 0
+          ),
           hintsUsed: 0,
         }),
       });
@@ -265,13 +296,38 @@ export default function QuestionPage() {
             </CardContent>
           </Card>
 
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => router.back()}>
-              Back to Questions
-            </Button>
-            <Button onClick={() => router.push("/questions")}>
-              Next Question
-            </Button>
+          <div className="flex flex-col gap-3">
+            {result.next?.questionId ? (
+              <div className="space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  {result.next.reason}
+                </p>
+                <div className="flex gap-3">
+                  <Button
+                    onClick={() =>
+                      router.push(`/questions/${result.next!.questionId}`)
+                    }
+                  >
+                    Next: {result.next.topicName}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => router.push("/questions")}
+                  >
+                    Browse Instead
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex gap-3">
+                <Button variant="outline" onClick={() => router.back()}>
+                  Back to Questions
+                </Button>
+                <Button onClick={() => router.push("/questions")}>
+                  Browse Questions
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       ) : null}

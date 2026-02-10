@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
+import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -99,9 +99,27 @@ export default function ReviewPage() {
 }
 
 function ReviewCard({ item }: { item: ReviewItem }) {
+  const router = useRouter();
+  const [loading, setLoading] = useState(false);
+
+  const handleClick = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/study-next?topicId=${item.topicId}&count=1`);
+      const data = await res.json();
+      if (data.tasks?.[0]?.questionId) {
+        router.push(`/questions/${data.tasks[0].questionId}`);
+      } else {
+        router.push(`/questions?topicId=${item.topicId}`);
+      }
+    } catch {
+      router.push(`/questions?topicId=${item.topicId}`);
+    }
+  }, [item.topicId, router]);
+
   return (
-    <Link href={`/questions?topicId=${item.topicId}`}>
-      <Card className={`transition-colors hover:bg-accent/50 ${item.isDue ? "border-amber-300" : ""}`}>
+    <button onClick={handleClick} disabled={loading} className="w-full text-left">
+      <Card className={`transition-colors hover:bg-accent/50 ${item.isDue ? "border-amber-300" : ""} ${loading ? "opacity-60" : ""}`}>
         <CardContent className="flex items-center justify-between py-4">
           <div className="flex-1">
             <div className="flex items-center gap-2">
@@ -113,6 +131,9 @@ function ReviewCard({ item }: { item: ReviewItem }) {
                 <Badge variant="outline" className="text-xs text-amber-600">
                   Due
                 </Badge>
+              )}
+              {loading && (
+                <span className="text-xs text-muted-foreground animate-pulse">Finding best question...</span>
               )}
             </div>
             <div className="mt-2 flex items-center gap-4">
@@ -131,6 +152,6 @@ function ReviewCard({ item }: { item: ReviewItem }) {
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </button>
   );
 }

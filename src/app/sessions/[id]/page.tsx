@@ -79,6 +79,10 @@ export default function ActiveSessionPage() {
     { questionId: string; isCorrect: boolean; selectedAnswer: string; timeSpentMs: number; correctAnswer: string; explanation: string }[]
   >([]);
 
+  const [masteryMap, setMasteryMap] = useState<
+    Map<string, { masteryLevel: number; accuracy7d: number; practiceCount: number }>
+  >(new Map());
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sessionStartRef = useRef<number>(Date.now());
 
@@ -104,6 +108,34 @@ export default function ActiveSessionPage() {
         }
       });
   }, [id]);
+
+  // Fetch mastery data for all topics in this session
+  useEffect(() => {
+    if (!session) return;
+    const topicIds = new Set(
+      session.sessionQuestions
+        .map((sq) => sq.question.topic?.id)
+        .filter((id): id is string => !!id)
+    );
+    if (topicIds.size === 0) return;
+
+    fetch("/api/mastery")
+      .then((r) => r.json())
+      .then((records: { topicId: string; masteryLevel: number; accuracy7d: number; practiceCount: number }[]) => {
+        const map = new Map<string, { masteryLevel: number; accuracy7d: number; practiceCount: number }>();
+        for (const r of records) {
+          if (topicIds.has(r.topicId)) {
+            map.set(r.topicId, {
+              masteryLevel: r.masteryLevel ?? 0,
+              accuracy7d: r.accuracy7d ?? 0,
+              practiceCount: r.practiceCount ?? 0,
+            });
+          }
+        }
+        setMasteryMap(map);
+      })
+      .catch(() => {});
+  }, [session]);
 
   // Countdown timer
   useEffect(() => {
@@ -143,11 +175,16 @@ export default function ActiveSessionPage() {
       passage: q.passage,
     });
 
+    const topicMastery = q.topic?.id ? masteryMap.get(q.topic.id) : undefined;
+    const mastery = topicMastery?.masteryLevel ?? 0;
+    const accuracy = topicMastery?.accuracy7d ?? 0;
+    const practice = topicMastery?.practiceCount ?? localAttempts.length;
+
     setStudent({
-      masteryLevel: 0.3,
-      scaffoldLevel: getScaffoldLevel(0.3),
-      accuracy7d: 0,
-      practiceCount: localAttempts.length,
+      masteryLevel: mastery,
+      scaffoldLevel: getScaffoldLevel(mastery, accuracy, practice),
+      accuracy7d: accuracy,
+      practiceCount: practice,
       topicName: q.topic?.name || q.subsection,
     });
 
@@ -155,7 +192,7 @@ export default function ActiveSessionPage() {
       setQuestion(null);
       setStudent(null);
     };
-  }, [phase, session, currentIndex, setQuestion, setStudent, localAttempts.length]);
+  }, [phase, session, currentIndex, setQuestion, setStudent, localAttempts.length, masteryMap]);
 
   const handleSubmitAnswer = useCallback(async () => {
     if (!selected || !session || submitting) return;
@@ -175,7 +212,14 @@ export default function ActiveSessionPage() {
           selectedAnswer: selected,
           timeSpentMs,
           sessionId: session.id,
-          scaffoldLevel: getScaffoldLevel(0.3),
+          scaffoldLevel: (() => {
+            const tm = sq.question.topic?.id ? masteryMap.get(sq.question.topic.id) : undefined;
+            return getScaffoldLevel(
+              tm?.masteryLevel ?? 0,
+              tm?.accuracy7d ?? 0,
+              tm?.practiceCount ?? 0
+            );
+          })(),
           hintsUsed: 0,
         }),
       });
@@ -219,7 +263,7 @@ export default function ActiveSessionPage() {
       setCurrentIndex(nextIndex);
       setQuestionStartTime(Date.now());
     }
-  }, [selected, session, currentIndex, questionStartTime, submitting]);
+  }, [selected, session, currentIndex, questionStartTime, submitting, masteryMap]);
 
   const handleFinishSession = useCallback(async () => {
     if (timerRef.current) clearInterval(timerRef.current);

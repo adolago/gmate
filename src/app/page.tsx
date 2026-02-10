@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,16 +47,53 @@ const ERROR_LABELS: Record<string, string> = {
   KNOWLEDGE_GAP: "Knowledge Gap",
 };
 
+interface StudyNextTask {
+  taskType: string;
+  topicName: string;
+  reason: string;
+  questionId: string | null;
+}
+
 export default function Dashboard() {
+  const router = useRouter();
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [studyNext, setStudyNext] = useState<StudyNextTask | null>(null);
+  const [studyNextLoading, setStudyNextLoading] = useState(false);
 
   useEffect(() => {
     fetch("/api/stats")
       .then((r) => r.json())
       .then(setStats)
       .finally(() => setLoading(false));
+
+    // Fetch the next recommended task
+    fetch("/api/study-next?count=1")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.tasks?.[0]) setStudyNext(data.tasks[0]);
+      })
+      .catch(() => {});
   }, []);
+
+  const handleStudyNext = useCallback(async () => {
+    if (studyNext?.questionId) {
+      router.push(`/questions/${studyNext.questionId}`);
+      return;
+    }
+    setStudyNextLoading(true);
+    try {
+      const res = await fetch("/api/study-next?count=1");
+      const data = await res.json();
+      if (data.tasks?.[0]?.questionId) {
+        router.push(`/questions/${data.tasks[0].questionId}`);
+      } else {
+        router.push("/questions");
+      }
+    } catch {
+      router.push("/questions");
+    }
+  }, [studyNext, router]);
 
   return (
     <div className="space-y-6">
@@ -205,6 +243,31 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         )}
+
+      {/* Study Next CTA */}
+      {studyNext && (
+        <Card className={`border-2 ${
+          studyNext.taskType === "REVIEW" || studyNext.taskType === "CONSOLIDATION"
+            ? "border-amber-300 bg-amber-50/50 dark:border-amber-700 dark:bg-amber-950/30"
+            : studyNext.taskType === "NEW_TOPIC"
+              ? "border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/30"
+              : "border-emerald-300 bg-emerald-50/50 dark:border-emerald-700 dark:bg-emerald-950/30"
+        }`}>
+          <CardContent className="flex items-center justify-between py-4">
+            <div>
+              <p className="text-sm font-medium">{studyNext.reason}</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {studyNext.taskType === "REVIEW" ? "Due for review" :
+                 studyNext.taskType === "CONSOLIDATION" ? "Consolidation review" :
+                 studyNext.taskType === "NEW_TOPIC" ? "New topic to learn" : "Warmup"}
+              </p>
+            </div>
+            <Button onClick={handleStudyNext} disabled={studyNextLoading}>
+              {studyNextLoading ? "Loading..." : "Study Now"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Quick Actions */}
       <div>
