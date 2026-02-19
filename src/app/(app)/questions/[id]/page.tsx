@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useQuestionContext } from "@/hooks/use-question-context";
 import { getScaffoldLevel } from "@/lib/gmat-constants";
+import { MathText } from "@/components/ui/math-text";
 
 interface QuestionOption {
   label: string;
@@ -208,16 +209,18 @@ export default function QuestionPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">
+            <MathText className="whitespace-pre-wrap text-sm leading-relaxed">
               {question.passage}
-            </p>
+            </MathText>
           </CardContent>
         </Card>
       )}
 
       {/* Question Stem */}
       <div>
-        <p className="text-base leading-relaxed">{question.stem}</p>
+        <p className="text-base leading-relaxed">
+          <MathText>{question.stem}</MathText>
+        </p>
       </div>
 
       {/* Answer Options */}
@@ -257,7 +260,7 @@ export default function QuestionPage() {
               >
                 {option.label}
               </span>
-              <span className="pt-0.5">{option.text}</span>
+              <span className="pt-0.5"><MathText>{option.text}</MathText></span>
             </button>
           );
         })}
@@ -290,9 +293,9 @@ export default function QuestionPage() {
               <CardTitle className="text-sm">Explanation</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+              <MathText className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
                 {result.explanation}
-              </p>
+              </MathText>
             </CardContent>
           </Card>
 

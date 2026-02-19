@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useQuestionContext } from "@/hooks/use-question-context";
 import { getScaffoldLevel } from "@/lib/gmat-constants";
+import { MathText } from "@/components/ui/math-text";
 
 interface QuestionOption {
   label: string;
@@ -351,15 +352,17 @@ export default function ActiveSessionPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed">
+            <MathText className="whitespace-pre-wrap text-sm leading-relaxed">
               {q.passage}
-            </p>
+            </MathText>
           </CardContent>
         </Card>
       )}
 
       {/* Stem */}
-      <p className="text-base leading-relaxed">{q.stem}</p>
+      <p className="text-base leading-relaxed">
+        <MathText>{q.stem}</MathText>
+      </p>
 
       {/* Options */}
       <div className="space-y-2">
@@ -384,7 +387,7 @@ export default function ActiveSessionPage() {
               >
                 {option.label}
               </span>
-              <span className="pt-0.5">{option.text}</span>
+              <span className="pt-0.5"><MathText>{option.text}</MathText></span>
             </button>
           );
         })}

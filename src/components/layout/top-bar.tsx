@@ -1,6 +1,8 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { LogOut } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 const BREADCRUMB_MAP: Record<string, string> = {
   "/": "Dashboard",
@@ -12,6 +14,7 @@ const BREADCRUMB_MAP: Record<string, string> = {
 
 export function TopBar() {
   const pathname = usePathname();
+  const router = useRouter();
 
   const breadcrumb =
     BREADCRUMB_MAP[pathname] ??
@@ -20,6 +23,12 @@ export function TopBar() {
     )?.[1] ??
     "Dashboard";
 
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+    router.refresh();
+  }
+
   return (
     <header className="flex h-14 items-center justify-between border-b border-border bg-background px-6">
       <div className="flex items-center gap-2 text-sm">
@@ -27,6 +36,10 @@ export function TopBar() {
         <span className="text-muted-foreground">/</span>
         <span className="font-medium">{breadcrumb}</span>
       </div>
+      <Button variant="ghost" size="sm" onClick={handleLogout}>
+        <LogOut className="size-4" />
+        Log out
+      </Button>
     </header>
   );
 }
