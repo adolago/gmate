@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SITE_DOMAIN: ${{ vars.SITE_DOMAIN }}
-      SSH_HOSTNAME: ${{ vars.SSH_HOSTNAME }}
+      SSH_HOSTNAME: ${{ vars.SSH_HOSTNAME || 'ssh.adolago.xyz' }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
       CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
       CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
@@ -87,7 +87,7 @@ jobs:
             exit 1
           fi
 
-          echo "Uploading application files..."
+          echo "Uploading and deploying application files..."
           tar -czf - \
             --exclude '.git' \
             --exclude '.github' \
@@ -95,22 +95,7 @@ jobs:
             --exclude 'node_modules' \
             --exclude '.env' \
             --exclude '.next' \
-            . | ssh dmz-gateway 'sudo tar xzf - -C /opt/gmate --strip-components=0'
-
-          echo "Installing dependencies..."
-          ssh dmz-gateway 'cd /opt/gmate && sudo chown -R artur:artur /opt/gmate && npm ci'
-
-          echo "Generating Prisma client..."
-          ssh dmz-gateway 'cd /opt/gmate && npx prisma generate'
-
-          echo "Running database migrations..."
-          ssh dmz-gateway 'cd /opt/gmate && npx prisma migrate deploy'
-
-          echo "Building application..."
-          ssh dmz-gateway 'cd /opt/gmate && npm run build'
-
-          echo "Restarting service..."
-          ssh dmz-gateway 'sudo systemctl restart gmate'
+            . | ssh dmz-gateway 'sudo /usr/local/sbin/dmz-site-deploy gmate.app'
 
           step_ok=1
 
