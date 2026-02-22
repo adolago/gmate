@@ -11,10 +11,22 @@ const legacyDirs = [
   path.join(repoRoot, 'src', 'app', 'sessions'),
 ];
 
+const legacyFiles = [
+  path.join(repoRoot, 'src', 'lib', 'password.ts'),
+];
+
 for (const dir of legacyDirs) {
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch (error) {
     console.warn(`cleanup warning for ${dir}:`, error.message);
+  }
+}
+
+for (const file of legacyFiles) {
+  try {
+    fs.rmSync(file, { force: true });
+  } catch (error) {
+    console.warn(`cleanup warning for ${file}:`, error.message);
   }
 }
