@@ -17,8 +17,12 @@ import {
   type ReviewQueueItem,
 } from "@/lib/task-selector";
 import { pickQuestion } from "@/lib/question-picker";
+import { requireRequestSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
+  const { response } = await requireRequestSession(request);
+  if (response) return response;
+
   const body = await request.json();
   const {
     questionId,

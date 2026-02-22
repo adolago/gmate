@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { verifyToken } from "@/lib/auth";
 
-const PUBLIC_PATHS = ["/login", "/signup"];
+const PUBLIC_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password"];
+const SESSION_COOKIE_NAMES = [
+  "better-auth.session_token",
+  "__Secure-better-auth.session_token",
+];
 
 function isPublic(pathname: string) {
   return (
@@ -14,28 +17,19 @@ function isPublic(pathname: string) {
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const hasSessionCookie = SESSION_COOKIE_NAMES.some((name) =>
+    Boolean(request.cookies.get(name)?.value)
+  );
 
   if (isPublic(pathname)) {
     // If authenticated and visiting login/signup, redirect to dashboard
-    if (PUBLIC_PATHS.includes(pathname)) {
-      const token = request.cookies.get("session")?.value;
-      if (token) {
-        const session = await verifyToken(token);
-        if (session) {
-          return NextResponse.redirect(new URL("/", request.url));
-        }
-      }
+    if (PUBLIC_PATHS.includes(pathname) && hasSessionCookie) {
+      return NextResponse.redirect(new URL("/", request.url));
     }
     return NextResponse.next();
   }
 
-  const token = request.cookies.get("session")?.value;
-  if (!token) {
-    return redirectOrReject(request, pathname);
-  }
-
-  const session = await verifyToken(token);
-  if (!session) {
+  if (!hasSessionCookie) {
     return redirectOrReject(request, pathname);
   }
 

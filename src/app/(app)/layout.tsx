@@ -3,6 +3,8 @@ import { AISidebar } from "@/components/layout/ai-sidebar";
 import { TopBar } from "@/components/layout/top-bar";
 import { QuestionContextProvider } from "@/hooks/use-question-context";
 
+const aiEnabled = !!process.env.AI_BASE_URL;
+
 export default function AppLayout({
   children,
 }: Readonly<{
@@ -15,7 +17,7 @@ export default function AppLayout({
         <div className="flex flex-1 overflow-hidden">
           <NavSidebar />
           <main className="flex-1 overflow-y-auto p-6">{children}</main>
-          <AISidebar />
+          {aiEnabled && <AISidebar />}
         </div>
       </div>
     </QuestionContextProvider>

@@ -8,8 +8,12 @@ import {
   type ReviewQueueItem,
 } from "@/lib/task-selector";
 import { pickQuestion } from "@/lib/question-picker";
+import { requireRequestSession } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
+  const { response } = await requireRequestSession(request);
+  if (response) return response;
+
   const count = parseInt(request.nextUrl.searchParams.get("count") ?? "5", 10);
   const topicIdFilter = request.nextUrl.searchParams.get("topicId");
 

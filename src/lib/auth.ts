@@ -1,58 +1,68 @@
-import { SignJWT, jwtVerify } from "jose";
-import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
+import { betterAuth } from "better-auth";
+import { prismaAdapter } from "better-auth/adapters/prisma";
+import { nextCookies } from "better-auth/next-js";
+import { prisma } from "@/lib/db";
 
-const COOKIE_NAME = "session";
-
-function getSecret() {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) throw new Error("AUTH_SECRET is not set");
-  return new TextEncoder().encode(secret);
+const authSecret = process.env.BETTER_AUTH_SECRET ?? process.env.AUTH_SECRET;
+if (!authSecret) {
+  throw new Error("BETTER_AUTH_SECRET (or AUTH_SECRET fallback) is not set");
 }
 
-export interface SessionPayload {
-  userId: string;
-  email: string;
-}
+const baseURL =
+  process.env.BETTER_AUTH_URL ??
+  process.env.BETTER_AUTH_BASE_URL ??
+  "http://localhost:3000";
 
-export async function createToken(payload: SessionPayload): Promise<string> {
-  return new SignJWT(payload as unknown as Record<string, unknown>)
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("7d")
-    .sign(getSecret());
-}
+export const auth = betterAuth({
+  secret: authSecret,
+  baseURL,
+  trustedOrigins: [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    process.env.BETTER_AUTH_URL,
+    process.env.BETTER_AUTH_BASE_URL,
+  ].filter(Boolean) as string[],
+  database: prismaAdapter(prisma, {
+    provider: "postgresql",
+  }),
+  emailAndPassword: {
+    enabled: true,
+    sendResetPassword: async ({ user, url }) => {
+      console.info(`[auth] Password reset link for ${user.email}: ${url}`);
+    },
+  },
+  user: {
+    modelName: "User",
+  },
+  session: {
+    modelName: "AuthSession",
+  },
+  account: {
+    modelName: "AuthAccount",
+  },
+  verification: {
+    modelName: "AuthVerification",
+  },
+  plugins: [nextCookies()],
+});
 
-export async function verifyToken(
-  token: string
-): Promise<SessionPayload | null> {
-  try {
-    const { payload } = await jwtVerify(token, getSecret());
-    return payload as unknown as SessionPayload;
-  } catch {
-    return null;
-  }
-}
-
-export async function setSessionCookie(payload: SessionPayload) {
-  const token = await createToken(payload);
-  const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
+export async function getRequestSession(request: Request) {
+  return auth.api.getSession({
+    headers: request.headers,
   });
 }
 
-export async function deleteSessionCookie() {
-  const cookieStore = await cookies();
-  cookieStore.delete(COOKIE_NAME);
-}
-
-export async function getSession(): Promise<SessionPayload | null> {
-  const cookieStore = await cookies();
-  const token = cookieStore.get(COOKIE_NAME)?.value;
-  if (!token) return null;
-  return verifyToken(token);
+export async function requireRequestSession(request: Request) {
+  const session = await getRequestSession(request);
+  if (!session) {
+    return {
+      session: null,
+      response: NextResponse.json(
+        { error: "Not authenticated" },
+        { status: 401 }
+      ),
+    } as const;
+  }
+  return { session, response: null } as const;
 }

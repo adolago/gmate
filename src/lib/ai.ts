@@ -1,8 +1,8 @@
 /**
  * AI Client — OpenAI-Compatible Streaming Client
  *
- * Connects to vLLM at vllm.home.arpa (or any OpenAI-compatible endpoint).
- * Swap to Kimi K2.5 by changing AI_BASE_URL and AI_MODEL in .env.
+ * Connects to any OpenAI-compatible endpoint configured via AI_BASE_URL.
+ * AI features are disabled when AI_BASE_URL is not set.
  */
 
 export interface ChatCompletionMessage {
@@ -16,12 +16,18 @@ interface AIConfig {
   model: string;
 }
 
-function getConfig(): AIConfig {
+function getConfig(): AIConfig | null {
+  const baseUrl = process.env.AI_BASE_URL;
+  if (!baseUrl) return null;
   return {
-    baseUrl: process.env.AI_BASE_URL || "http://vllm.home.arpa/v1",
+    baseUrl,
     apiKey: process.env.AI_API_KEY || "not-needed",
     model: process.env.AI_MODEL || "default",
   };
+}
+
+export function isAIEnabled(): boolean {
+  return !!process.env.AI_BASE_URL;
 }
 
 /**
@@ -32,6 +38,9 @@ export async function streamChat(
   messages: ChatCompletionMessage[]
 ): Promise<ReadableStream<Uint8Array>> {
   const config = getConfig();
+  if (!config) {
+    throw new Error("AI is not configured — set AI_BASE_URL to enable AI features");
+  }
 
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",

@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import {
   createStreamingResponse,
+  isAIEnabled,
   type ChatCompletionMessage,
 } from "@/lib/ai";
 import {
@@ -8,8 +9,19 @@ import {
   type QuestionContext,
   type StudentContext,
 } from "@/lib/ai-context";
+import { requireRequestSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
+  if (!isAIEnabled()) {
+    return Response.json(
+      { error: "AI features are not available" },
+      { status: 503 }
+    );
+  }
+
+  const { response } = await requireRequestSession(request);
+  if (response) return response;
+
   const body = await request.json();
   const {
     message,

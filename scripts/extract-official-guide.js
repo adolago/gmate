@@ -1,5 +1,5 @@
 /**
- * GMAT Official Guide — Question Extractor
+ * GMAT Official Guide — Question Extractor v2
  *
  * Paste this entire script into Chrome DevTools console while on:
  *   https://gmatofficialpractice.mba.com
@@ -8,20 +8,37 @@
  *   1. Purchase the GMAT Official Guide 2025-2026 Online Question Bank
  *   2. Log in at gmatofficialpractice.mba.com
  *   3. Navigate to Practice Questions → create a custom quiz with ALL questions
- *      for a given section (e.g., all Quantitative Reasoning questions)
  *   4. Start the quiz so a question is visible on screen
  *   5. Open DevTools (F12) → Console → paste this script → press Enter
  *
  * The script will:
- *   - Extract the current question (stem, options, code)
- *   - Click an answer to reveal the correct answer + explanation
- *   - Record the correct answer and explanation
- *   - Navigate to next question
- *   - Repeat until all questions in the quiz are done
- *   - Download the result as a JSON file matching official-questions.json format
+ *   - Extract the current question (stem, options, passage, code)
+ *   - Click an answer option, then click Confirm
+ *   - Read the correct answer (marked with class "corrected") + explanation
+ *   - Click Continue to advance to the next question
+ *   - Repeat until the quiz ends
+ *   - Download the result as a JSON file
  *
  * Output: Downloads a .json file you place at data/official-questions.json
  *         Then run: npx tsx scripts/import-official.ts
+ *
+ * DOM structure (confirmed Feb 2026):
+ *   div.content-container
+ *     └─ div.question-container
+ *          ├─ div.reading-passage          ← passage (RC only)
+ *          └─ div
+ *               ├─ span.sr-only "Question"
+ *               ├─ p.e_id "100546"         ← question code
+ *               ├─ p "According to..."     ← stem paragraph(s)
+ *               └─ ul.question-choices-multi
+ *                    └─ li
+ *                        ├─ div.multi-choice[data-choice="A"]
+ *                        └─ div.choice-content "option text"
+ *
+ *   After confirming (answer-container sibling becomes visible):
+ *     div.multi-choice.corrected[data-choice="D"]  ← correct answer
+ *     div.multi-choice.incorrect[data-choice="A"]  ← user's wrong pick
+ *     p "The correct answer is D."                 ← + explanation text
  *
  * ─────────────────────────────────────────────────
  * IMPORTANT: This script is for personal use with your purchased content.
@@ -34,23 +51,18 @@
 
   // ── Configuration ──────────────────────────────
   const CONFIG = {
-    // Delay between actions (ms) — increase if the site is slow
-    actionDelay: 1500,
-    // Delay after clicking answer before reading result
-    answerRevealDelay: 2500,
-    // Delay after clicking "Next" before reading new question
-    nextQuestionDelay: 2000,
-    // Maximum questions to extract (safety limit). Set to Infinity for all.
-    maxQuestions: Infinity,
-    // If true, logs verbose output to console
+    actionDelay: 1200,
+    answerRevealDelay: 2000,
+    nextQuestionDelay: 1500,
+    maxQuestions: 3, // ← CHANGE TO Infinity FOR FULL RUN
     verbose: true,
+    // Auto-save every N questions (downloads partial JSON as backup)
+    autoSaveInterval: 50,
   };
 
-  // ── GMAT Focus Section Mapping ─────────────────
-  // The platform organizes by study plan sections. Map them to our schema.
-  // Adjust these if the platform labels differ from what you see.
+  // ── GMAT Focus Section + Type Detection ────────
+  // Since all questions are in one quiz, we auto-detect per question.
   const SECTION_MAP = {
-    // Quantitative Reasoning
     "problem solving": {
       section: "QUANTITATIVE_REASONING",
       questionType: "PROBLEM_SOLVING",
@@ -61,7 +73,6 @@
       questionType: "PROBLEM_SOLVING",
       subsection: "Problem Solving",
     },
-    // Data Insights
     "data sufficiency": {
       section: "DATA_INSIGHTS",
       questionType: "DATA_SUFFICIENCY",
@@ -87,7 +98,6 @@
       questionType: "TWO_PART_ANALYSIS",
       subsection: "Two-Part Analysis",
     },
-    // Verbal Reasoning
     "reading comprehension": {
       section: "VERBAL_REASONING",
       questionType: "READING_COMPREHENSION",
@@ -98,6 +108,31 @@
       questionType: "CRITICAL_REASONING",
       subsection: "Critical Reasoning",
     },
+  };
+
+  // ── Verified DOM Selectors ─────────────────────
+  const SEL = {
+    // Question container (the visible one with content)
+    questionContainer: "div.question-container",
+    // Passage for RC questions
+    passage: "div.reading-passage",
+    // Question code (e.g. "100546")
+    questionCode: "p.e_id",
+    // Options
+    optionsList: "ul.question-choices-multi",
+    optionItem: "ul.question-choices-multi > li",
+    choiceLetter: "div.multi-choice",
+    choiceContent: "div.choice-content",
+    // Post-answer: correct answer has class "corrected" (NOT "correct")
+    correctOption: "div.multi-choice.corrected",
+    incorrectOption: "div.multi-choice.incorrect",
+    // Answer container (sibling of question-container, shown after confirm)
+    answerContainer: "div.answer-container",
+    // Buttons (toolbar buttons are <a> tags, NOT <button>)
+    confirmButton: "button.btn-success",
+    continueButton: "button.continue",
+    nextToolbar: "a.toolbar-btn.cap.next",
+    prevToolbar: "a.toolbar-btn.previous",
   };
 
   // ── Utilities ──────────────────────────────────
@@ -111,14 +146,31 @@
     console.warn("[GMATE]", ...args);
   }
 
-  /** Clean text: normalize whitespace, trim */
   function clean(text) {
-    return (text || "")
-      .replace(/\s+/g, " ")
-      .trim();
+    return (text || "").replace(/\s+/g, " ").trim();
   }
 
-  /** Download JSON as a file */
+  // Simulate a real click that Backbone.js/jQuery delegated events will pick up.
+  // Uses jQuery's .trigger() if available (preferred for Backbone apps),
+  // otherwise dispatches a full MouseEvent with proper bubbling.
+  function simulateClick(el) {
+    if (!el) return false;
+    // Prefer jQuery trigger — Backbone.js binds events via jQuery delegation
+    if (window.$ || window.jQuery) {
+      const jq = window.$ || window.jQuery;
+      jq(el).trigger("click");
+      return true;
+    }
+    // Fallback: dispatch a real MouseEvent
+    const evt = new MouseEvent("click", {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+    });
+    el.dispatchEvent(evt);
+    return true;
+  }
+
   function downloadJSON(data, filename) {
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json",
@@ -133,223 +185,251 @@
     URL.revokeObjectURL(url);
   }
 
-  // ── DOM Selectors ──────────────────────────────
-  // These selectors were discovered by inspecting the GMAT Official Practice
-  // app DOM. If the site updates its structure, adjust these.
+  // ── Find the ACTIVE question container ─────────
+  // There are multiple .question-container elements on the page.
+  // The active one has visible content (passage + options).
+  function findActiveQuestionContainer() {
+    const containers = document.querySelectorAll(SEL.questionContainer);
+    for (const c of containers) {
+      if (
+        c.offsetHeight > 0 &&
+        c.textContent.trim().length > 10 &&
+        !c.classList.contains("is-hidden")
+      ) {
+        return c;
+      }
+    }
+    // Fallback: find container that has the options list
+    const ul = document.querySelector(SEL.optionsList);
+    if (ul) {
+      let el = ul.parentElement;
+      while (el && !el.classList.contains("question-container")) {
+        el = el.parentElement;
+      }
+      return el;
+    }
+    return null;
+  }
 
-  const SEL = {
-    // Question container
-    questionContainer: "div.question-container",
-    // Question ID/code (e.g. "2SK1G4")
-    questionCode: "p.e_id",
-    // Question stem — paragraphs inside the container (after the code)
-    // We extract all <p> that aren't the e_id
-    stemParagraphs: "div.question-container p:not(.e_id)",
-    // Answer options list
-    optionsList: "ul.question-choices-multi",
-    // Individual option items
-    optionItem: "ul.question-choices-multi > li",
-    // Choice letter indicator (has data-choice="A", "B", etc.)
-    choiceLetter: "div.multi-choice",
-    // Choice text content
-    choiceContent: "div.choice-content",
-    // Passage text (for RC questions)
-    passage: "div.passage-content, div.stimulus-content, div.passage",
-
-    // ── Post-answer selectors ──
-    // These appear after submitting an answer. Verify/adjust with your copy.
-
-    // The correct answer indicator — usually a green-highlighted choice
-    // or an explicit "Correct Answer: X" element
-    correctAnswerBadge: ".correct-answer, .answer-correct, [class*='correct']",
-    // The correct option will typically get a "correct" class
-    correctOption: "li.correct, li[class*='correct'], div.multi-choice.correct",
-    // Explanation text container
-    explanationContainer:
-      "div.explanation, div.answer-explanation, div.rationale, [class*='explanation'], [class*='rationale']",
-    // Submit / Check answer button
-    submitButton:
-      "button.check-answer, button.submit-answer, button[class*='submit'], button[class*='check'], .check-answer-btn, .submit-btn",
-    // Next question button
-    nextButton:
-      "button.next-question, button[class*='next'], .next-btn, a.next-question",
-
-    // ── Fallback: generic button search ──
-    allButtons: "button, a.btn, [role='button']",
-  };
-
-  // ── Extraction Functions ───────────────────────
-
-  /**
-   * Extract question data from the currently visible question DOM.
-   * Returns null if no question is found.
-   */
+  // ── Extract question from DOM ──────────────────
   function extractCurrentQuestion() {
-    const container = document.querySelector(SEL.questionContainer);
+    const container = findActiveQuestionContainer();
     if (!container) {
-      warn("No question container found on page");
+      warn("No active question container found");
       return null;
     }
 
-    // Question code
-    const codeEl = container.querySelector("p.e_id");
+    // Question code from p.e_id
+    const codeEl = container.querySelector(SEL.questionCode);
     const questionCode = codeEl ? clean(codeEl.textContent) : null;
 
-    // Stem — all paragraph text that isn't the question code
-    const stemEls = container.querySelectorAll("p");
+    // Passage (RC questions have div.reading-passage)
+    const passageEl = container.querySelector(SEL.passage);
+    const passage = passageEl ? clean(passageEl.textContent) : null;
+
+    // Stem: paragraphs that are NOT .e_id and NOT inside the passage or options
+    // The stem paragraphs are siblings of p.e_id inside the question body div
     const stemParts = [];
-    for (const p of stemEls) {
+    const bodyDiv = codeEl ? codeEl.parentElement : container;
+    const paragraphs = bodyDiv.querySelectorAll("p");
+    for (const p of paragraphs) {
       if (p.classList.contains("e_id")) continue;
+      // Skip paragraphs that are inside the passage
+      if (passageEl && passageEl.contains(p)) continue;
       const text = clean(p.textContent);
       if (text) stemParts.push(text);
     }
     const stem = stemParts.join("\n\n");
 
-    // Options
-    const optionEls = document.querySelectorAll(SEL.optionItem);
+    // Options from ul.question-choices-multi > li
+    const optionEls = container.querySelectorAll(SEL.optionItem);
     const options = [];
     for (const li of optionEls) {
       const choiceDiv = li.querySelector(SEL.choiceLetter);
       const contentDiv = li.querySelector(SEL.choiceContent);
       const label = choiceDiv
-        ? choiceDiv.getAttribute("data-choice") || ""
+        ? (choiceDiv.getAttribute("data-choice") || "").toUpperCase()
         : "";
-      const text = contentDiv ? clean(contentDiv.textContent) : clean(li.textContent);
+      const text = contentDiv
+        ? clean(contentDiv.textContent)
+        : clean(li.textContent);
       if (label && text) {
-        options.push({ label: label.toUpperCase(), text });
+        options.push({ label, text });
       }
     }
 
-    // Passage (for RC questions)
-    const passageEl = document.querySelector(SEL.passage);
-    const passage = passageEl ? clean(passageEl.textContent) : null;
-
-    // Data-id from container
+    // data-id from the container
     const dataId = container.getAttribute("data-id");
 
-    return {
-      questionCode,
-      dataId,
-      stem,
-      options,
-      passage,
-    };
+    return { questionCode, dataId, stem, options, passage };
   }
 
-  /**
-   * Click the first available answer option to trigger answer reveal.
-   * We click "A" by default — the answer is recorded from the reveal.
-   */
+  // ── Click answer option A ─────────────────────
   function clickFirstOption() {
-    const firstOption = document.querySelector(
-      SEL.optionItem + ":first-child"
+    // Click the <li> parent — the click handler is on the list item, not the inner div
+    const firstLi = document.querySelector(SEL.optionItem);
+    if (firstLi) {
+      simulateClick(firstLi);
+      log("Clicked first option (li)");
+      return true;
+    }
+    // Fallback: click div.multi-choice directly
+    const choiceA = document.querySelector(
+      'div.multi-choice[data-choice="A"]'
     );
-    if (firstOption) {
-      firstOption.click();
-      log("Clicked first option");
+    if (choiceA) {
+      simulateClick(choiceA);
+      log("Clicked option A (div)");
       return true;
     }
-    // Fallback: click any multi-choice div
-    const choice = document.querySelector(SEL.choiceLetter);
-    if (choice) {
-      choice.click();
-      log("Clicked choice div");
-      return true;
-    }
-    warn("Could not find an option to click");
+    warn("No option to click");
     return false;
   }
 
-  /**
-   * Find and click the submit/check answer button.
-   */
-  function clickSubmit() {
-    // Try specific selectors first
-    const submitBtn = document.querySelector(SEL.submitButton);
-    if (submitBtn) {
-      submitBtn.click();
-      log("Clicked submit button");
-      return true;
+  // ── Click Confirm button ──────────────────────
+  async function clickConfirm() {
+    // Wait for Confirm to become enabled (up to 3 seconds)
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const buttons = document.querySelectorAll("button");
+      for (const btn of buttons) {
+        const text = clean(btn.textContent).toLowerCase();
+        if (
+          text === "confirm" &&
+          !btn.classList.contains("is-disabled") &&
+          !btn.disabled
+        ) {
+          simulateClick(btn);
+          log("Clicked Confirm");
+          return true;
+        }
+      }
+      await sleep(500);
     }
-    // Fallback: search all buttons for submit-like text
-    const buttons = document.querySelectorAll(SEL.allButtons);
-    for (const btn of buttons) {
-      const text = (btn.textContent || "").toLowerCase().trim();
+    warn("Confirm button not found or still disabled");
+    return false;
+  }
+
+  // ── Handle post-answer: confidence + Continue ──
+  async function clickContinue() {
+    await sleep(800);
+
+    // Sometimes a confidence rating dialog appears.
+    // Click any confidence button to dismiss it (could be <button> or <a>).
+    const confBtns = document.querySelectorAll(
+      ".high-confidence, .medium-confidence, .low-confidence"
+    );
+    for (const btn of confBtns) {
+      if (btn.offsetHeight > 0) {
+        simulateClick(btn);
+        log("Clicked confidence button");
+        await sleep(500);
+        break;
+      }
+    }
+
+    // Click Continue (search both <button> and <a> tags)
+    const clickables = document.querySelectorAll("button, a.btn");
+    for (const el of clickables) {
+      const text = clean(el.textContent).toLowerCase();
       if (
-        text.includes("check") ||
-        text.includes("submit") ||
-        text.includes("confirm")
+        text === "continue" &&
+        !el.classList.contains("is-disabled") &&
+        el.offsetHeight > 0
       ) {
-        btn.click();
-        log("Clicked button:", text);
+        simulateClick(el);
+        log("Clicked Continue");
         return true;
       }
     }
-    warn("Could not find submit button");
+
+    // Fallback: click the toolbar Next button (<a> tag)
+    const next = document.querySelector(SEL.nextToolbar);
+    if (next) {
+      simulateClick(next);
+      log("Clicked toolbar Next");
+      return true;
+    }
+
+    warn("Could not advance to next question");
     return false;
   }
 
-  /**
-   * After answer submission, extract the correct answer and explanation.
-   */
+  // ── Extract correct answer + explanation ───────
   function extractAnswerResult() {
     let correctAnswer = null;
     let explanation = null;
 
-    // Strategy 1: Look for an option marked as correct
-    const correctEl = document.querySelector(SEL.correctOption);
-    if (correctEl) {
-      const choiceDiv =
-        correctEl.querySelector(SEL.choiceLetter) || correctEl;
-      correctAnswer =
-        choiceDiv.getAttribute("data-choice") || correctEl.getAttribute("data-choice");
-      if (correctAnswer) correctAnswer = correctAnswer.toUpperCase();
+    // Strategy 1: Find div.multi-choice.corrected (the BenchPrep class)
+    const correctedEl = document.querySelector(SEL.correctOption);
+    if (correctedEl) {
+      correctAnswer = (
+        correctedEl.getAttribute("data-choice") || ""
+      ).toUpperCase();
     }
 
-    // Strategy 2: Look for correct-answer badge text
+    // Strategy 2: Parse "The correct answer is X." text anywhere on page
     if (!correctAnswer) {
-      const badge = document.querySelector(SEL.correctAnswerBadge);
-      if (badge) {
-        const text = clean(badge.textContent);
-        // Look for single letter A-E
-        const match = text.match(/\b([A-E])\b/);
-        if (match) correctAnswer = match[1];
-      }
+      const allText = document.body.textContent || "";
+      const match = allText.match(/The correct answer is ([A-E])/i);
+      if (match) correctAnswer = match[1].toUpperCase();
     }
 
-    // Strategy 3: Scan all options for a "correct" class or green styling
+    // Strategy 3: Scan all options for "corrected" or "correct" class
     if (!correctAnswer) {
-      const allOptions = document.querySelectorAll(SEL.optionItem);
-      for (const li of allOptions) {
-        const cls = li.className || "";
-        const childCls = (li.querySelector(SEL.choiceLetter)?.className) || "";
-        if (
-          cls.includes("correct") ||
-          childCls.includes("correct") ||
-          cls.includes("right") ||
-          childCls.includes("right")
-        ) {
-          const choiceDiv = li.querySelector(SEL.choiceLetter);
-          correctAnswer = choiceDiv?.getAttribute("data-choice")?.toUpperCase();
-          break;
+      const opts = document.querySelectorAll(SEL.optionItem);
+      for (const li of opts) {
+        const mc = li.querySelector(SEL.choiceLetter);
+        if (mc) {
+          const cls = mc.className || "";
+          if (cls.includes("corrected") || cls.includes("correct")) {
+            correctAnswer = (
+              mc.getAttribute("data-choice") || ""
+            ).toUpperCase();
+            break;
+          }
         }
       }
     }
 
-    // Explanation
-    const explEl = document.querySelector(SEL.explanationContainer);
-    if (explEl) {
-      explanation = clean(explEl.textContent);
+    // Explanation: look in the answer-container sibling
+    // After Confirm, the answer-container becomes visible with explanation paragraphs
+    const ansContainers = document.querySelectorAll(SEL.answerContainer);
+    for (const ac of ansContainers) {
+      if (ac.offsetHeight > 0 || ac.textContent.trim().length > 50) {
+        const paragraphs = ac.querySelectorAll("p");
+        const explParts = [];
+        for (const p of paragraphs) {
+          if (p.classList.contains("e_id")) continue;
+          const text = clean(p.textContent);
+          // Skip the passage text (it's also in the answer container)
+          // Explanation paragraphs typically come after the options
+          if (text.length > 20) explParts.push(text);
+        }
+        // The explanation is usually the last substantive paragraphs
+        // that aren't the stem or passage. Filter for explanation-like text.
+        if (explParts.length > 0) {
+          // Look for "The correct answer is" as a marker
+          const markerIdx = explParts.findIndex((t) =>
+            t.match(/The correct answer is [A-E]/i)
+          );
+          if (markerIdx >= 0) {
+            // Everything from the marker onward is explanation
+            explanation = explParts.slice(markerIdx).join("\n\n");
+          } else {
+            // Take the last paragraph(s) as explanation
+            explanation = explParts[explParts.length - 1];
+          }
+        }
+        if (explanation) break;
+      }
     }
 
-    // Fallback: look for any new text block that appeared (explanation area)
+    // Fallback: search for "The correct answer is" pattern anywhere
     if (!explanation) {
-      const candidates = document.querySelectorAll(
-        "[class*='explain'], [class*='solution'], [class*='rationale'], [class*='feedback']"
-      );
-      for (const el of candidates) {
-        const text = clean(el.textContent);
-        if (text.length > 30) {
+      const all = document.querySelectorAll("p");
+      for (const p of all) {
+        const text = clean(p.textContent);
+        if (text.match(/The correct answer is [A-E]/i) && text.length > 30) {
           explanation = text;
           break;
         }
@@ -359,70 +439,87 @@
     return { correctAnswer, explanation };
   }
 
-  /**
-   * Click the "Next" button to advance to the next question.
-   */
-  function clickNext() {
-    const nextBtn = document.querySelector(SEL.nextButton);
-    if (nextBtn) {
-      nextBtn.click();
-      log("Clicked next button");
-      return true;
+  // ── Detect question type per question ──────────
+  // Since all 1162 questions are in one quiz, detect per question.
+  function detectQuestionType(stem, options, passage) {
+    const stemLower = (stem || "").toLowerCase();
+    const optionText = options.map((o) => o.text).join(" ").toLowerCase();
+    const allText = `${stemLower} ${optionText}`;
+
+    // Data Sufficiency: options always include "Statement (1) ALONE"
+    if (
+      optionText.includes("statement (1) alone") ||
+      optionText.includes("statements (1) and (2) together") ||
+      allText.includes("data sufficiency")
+    ) {
+      return SECTION_MAP["data sufficiency"];
     }
-    // Fallback: button text search
-    const buttons = document.querySelectorAll(SEL.allButtons);
-    for (const btn of buttons) {
-      const text = (btn.textContent || "").toLowerCase().trim();
-      if (text.includes("next") || text === "→" || text === ">") {
-        btn.click();
-        log("Clicked next:", text);
-        return true;
-      }
+
+    // Two-Part Analysis: distinctive format with two-column answers
+    if (
+      allText.includes("two-part") ||
+      document.querySelector("table.two-part-analysis, .two-part")
+    ) {
+      return SECTION_MAP["two-part analysis"];
     }
-    warn("Could not find next button");
-    return false;
+
+    // Table Analysis: has a data table
+    if (
+      document.querySelector(".table-analysis, table.data-table") ||
+      allText.includes("sort by")
+    ) {
+      return SECTION_MAP["table analysis"];
+    }
+
+    // Graphics Interpretation: has a graph/chart
+    if (
+      document.querySelector(
+        ".graphics-interpretation, .graph-container, .chart-container, svg.chart"
+      ) ||
+      allText.includes("select from the drop")
+    ) {
+      return SECTION_MAP["graphics interpretation"];
+    }
+
+    // Multi-Source Reasoning: multiple tabs/sources
+    if (
+      document.querySelector(
+        ".multi-source, .source-tabs, .tabbed-content"
+      ) ||
+      allText.includes("multi-source")
+    ) {
+      return SECTION_MAP["multi-source reasoning"];
+    }
+
+    // Reading Comprehension: has a passage
+    if (passage && passage.length > 100) {
+      return SECTION_MAP["reading comprehension"];
+    }
+
+    // Critical Reasoning: verbal question without long passage
+    // CR stems are typically argument-based (shorter than RC passages)
+    if (passage && passage.length > 30 && passage.length <= 100) {
+      return SECTION_MAP["critical reasoning"];
+    }
+
+    // CR: question asks about argument structure
+    if (
+      stemLower.includes("weaken") ||
+      stemLower.includes("strengthen") ||
+      stemLower.includes("assumption") ||
+      stemLower.includes("conclusion") ||
+      stemLower.includes("argument") ||
+      stemLower.includes("flaw") ||
+      stemLower.includes("the following") ||
+      stemLower.includes("if true")
+    ) {
+      return SECTION_MAP["critical reasoning"];
+    }
+
+    // Default: Problem Solving (quantitative)
+    return SECTION_MAP["problem solving"];
   }
 
-  /**
-   * Detect the section type from the page context.
-   * Tries: URL hash, page headings, BPApp state.
-   */
-  function detectSectionType() {
-    // Try URL hash
-    const hash = window.location.hash.toLowerCase();
-
-    // Try BPApp state
-    const activeSection =
-      window.BPApp?.state?.attributes?.active_section || "";
-    const activeSub =
-      window.BPApp?.state?.attributes?.active_sub_section || "";
-
-    // Try page headings
-    const headings = document.querySelectorAll("h1, h2, h3, .section-title, .quiz-title");
-    let headingText = "";
-    for (const h of headings) {
-      headingText += " " + (h.textContent || "").toLowerCase();
-    }
-
-    const combined = `${hash} ${activeSection} ${activeSub} ${headingText}`.toLowerCase();
-
-    for (const [keyword, mapping] of Object.entries(SECTION_MAP)) {
-      if (combined.includes(keyword)) {
-        return mapping;
-      }
-    }
-
-    // Default fallback
-    return {
-      section: "QUANTITATIVE_REASONING",
-      questionType: "PROBLEM_SOLVING",
-      subsection: "Problem Solving",
-    };
-  }
-
-  /**
-   * Estimate difficulty from question length (same heuristic as import-gmatclub.ts).
-   */
   function estimateDifficulty(stem) {
     const wordCount = stem.split(/\s+/).length;
     if (wordCount > 80) return "HARD";
@@ -430,106 +527,165 @@
     return "EASY";
   }
 
-  /**
-   * Check if we've reached the end of the quiz.
-   */
+  // ── Check if quiz is done ─────────────────────
   function isQuizComplete() {
-    // Look for end-of-quiz indicators
-    const page = document.body.textContent || "";
-    const indicators = [
-      "quiz complete",
-      "quiz finished",
-      "all questions answered",
-      "review results",
-      "score report",
-      "quiz summary",
-    ];
-    const lower = page.toLowerCase();
-    for (const indicator of indicators) {
-      if (lower.includes(indicator)) return true;
-    }
-    // No question container visible
-    if (!document.querySelector(SEL.questionContainer)) return true;
+    // Check for the "all questions answered" message
+    const aqa = document.querySelector(".all-questions-answered");
+    if (aqa && aqa.offsetHeight > 0) return true;
+
+    // No visible question container
+    const container = findActiveQuestionContainer();
+    if (!container) return true;
+
+    // No options visible
+    const opts = document.querySelectorAll(SEL.optionItem);
+    if (opts.length === 0) return true;
+
     return false;
   }
 
-  // ── Main Extraction Loop ───────────────────────
+  // ── MAIN EXTRACTION LOOP ──────────────────────
 
   console.log("╔═══════════════════════════════════════════════╗");
-  console.log("║   GMATE — Official Guide Question Extractor  ║");
+  console.log("║  GMATE — Official Guide Extractor v2         ║");
+  console.log("║  Selectors verified against BenchPrep DOM    ║");
   console.log("╚═══════════════════════════════════════════════╝");
   console.log("");
 
-  const sectionMapping = detectSectionType();
-  log("Detected section:", sectionMapping.section, "/", sectionMapping.questionType);
-
   const collected = [];
+  const seenCodes = new Set();
   let questionIndex = 0;
+  let consecutiveFailures = 0;
 
   while (questionIndex < CONFIG.maxQuestions) {
     log(`\n── Question ${questionIndex + 1} ──`);
 
-    // Wait for question to load
     await sleep(CONFIG.actionDelay);
 
     // Check if quiz is done
     if (isQuizComplete()) {
-      log("Quiz appears complete. Stopping.");
+      log("Quiz complete. Stopping.");
       break;
     }
 
-    // 1. Extract question data
+    // 1. Extract question data from visible DOM
     const qData = extractCurrentQuestion();
-    if (!qData || !qData.stem) {
-      warn("Could not extract question. Stopping.");
-      break;
+    if (!qData || !qData.stem || qData.options.length === 0) {
+      consecutiveFailures++;
+      if (consecutiveFailures >= 3) {
+        warn("3 consecutive failures. Stopping.");
+        break;
+      }
+      warn("Could not extract question, retrying...");
+      // Try clicking Next in case we're stuck
+      const next = document.querySelector(SEL.nextToolbar);
+      if (next) simulateClick(next);
+      await sleep(CONFIG.nextQuestionDelay);
+      continue;
     }
-    log("Code:", qData.questionCode, "| Stem:", qData.stem.slice(0, 60) + "...");
-    log("Options:", qData.options.length);
+    consecutiveFailures = 0;
 
-    // 2. Click an answer to submit
-    const clicked = clickFirstOption();
-    if (!clicked) {
-      warn("Could not click an option. Stopping.");
-      break;
+    // Skip duplicates (same question code)
+    if (qData.questionCode && seenCodes.has(qData.questionCode)) {
+      log("Duplicate question code:", qData.questionCode, "— skipping");
+      const next = document.querySelector(SEL.nextToolbar);
+      if (next) simulateClick(next);
+      await sleep(CONFIG.nextQuestionDelay);
+      questionIndex++;
+      continue;
     }
-    await sleep(500);
+    if (qData.questionCode) seenCodes.add(qData.questionCode);
 
-    // 3. Submit the answer
-    const submitted = clickSubmit();
-    if (submitted) {
-      await sleep(CONFIG.answerRevealDelay);
+    log(
+      "Code:",
+      qData.questionCode,
+      "| Stem:",
+      qData.stem.slice(0, 60) + "...",
+    );
+    log("Options:", qData.options.length, "| Passage:", !!qData.passage);
+
+    // 2. Check if answer is already revealed (review mode)
+    let result;
+    const alreadyRevealed = document.querySelector(SEL.correctOption);
+    if (alreadyRevealed) {
+      log("Answer already revealed (review mode)");
+      result = extractAnswerResult();
     } else {
-      // Some quiz modes auto-submit on option click
+      // 3. Practice mode: click answer → Confirm → extract result
+      const clicked = clickFirstOption();
+      if (!clicked) {
+        warn("Could not click option. Trying Next.");
+        const next = document.querySelector(SEL.nextToolbar);
+        if (next) simulateClick(next);
+        await sleep(CONFIG.nextQuestionDelay);
+        questionIndex++;
+        continue;
+      }
+      await sleep(600);
+
+      const confirmed = await clickConfirm();
+      if (!confirmed) {
+        warn("Confirm failed. Trying Next.");
+        const next = document.querySelector(SEL.nextToolbar);
+        if (next) simulateClick(next);
+        await sleep(CONFIG.nextQuestionDelay);
+        questionIndex++;
+        continue;
+      }
       await sleep(CONFIG.answerRevealDelay);
+
+      result = extractAnswerResult();
     }
 
-    // 4. Extract correct answer + explanation
-    const result = extractAnswerResult();
-    log("Correct:", result.correctAnswer, "| Explanation length:", result.explanation?.length || 0);
+    log(
+      "Correct:",
+      result.correctAnswer,
+      "| Explanation:",
+      result.explanation ? result.explanation.length + " chars" : "none",
+    );
 
-    // 5. Build the question object
+    // 4. Detect question type from content
+    const typeInfo = detectQuestionType(
+      qData.stem,
+      qData.options,
+      qData.passage,
+    );
+
+    // 5. Build question object (matches import-official.ts OfficialQuestion)
     const question = {
-      section: sectionMapping.section,
-      questionType: sectionMapping.questionType,
-      subsection: sectionMapping.subsection,
+      section: typeInfo.section,
+      questionType: typeInfo.questionType,
+      subsection: typeInfo.subsection,
       difficulty: estimateDifficulty(qData.stem),
       stem: qData.stem,
       ...(qData.passage ? { passage: qData.passage } : {}),
       options: qData.options,
-      correctAnswer: result.correctAnswer || "A",
-      explanation: result.explanation || "No explanation extracted.",
-      tags: ["official-guide", sectionMapping.questionType.toLowerCase().replace(/_/g, "-")],
+      correctAnswer: result.correctAnswer || "?",
+      explanation: result.explanation || "",
+      tags: [
+        "official-guide",
+        typeInfo.questionType.toLowerCase().replace(/_/g, "-"),
+      ],
     };
 
     collected.push(question);
-    log(`Collected ${collected.length} questions so far`);
+    log(`Collected ${collected.length} questions`);
 
-    // 6. Navigate to next question
-    await sleep(500);
-    const nextClicked = clickNext();
-    if (!nextClicked) {
-      log("No next button — might be the last question.");
+    // 6. Auto-save backup
+    if (
+      CONFIG.autoSaveInterval > 0 &&
+      collected.length % CONFIG.autoSaveInterval === 0
+    ) {
+      const backupName = `og-backup-${collected.length}-${Date.now()}.json`;
+      downloadJSON(collected, backupName);
+      log(`Auto-saved backup: ${backupName}`);
+    }
+
+    // 7. Advance to next question
+    await sleep(400);
+    const advanced = await clickContinue();
+    if (!advanced) {
+      log("Could not advance. May be the last question.");
       break;
     }
     await sleep(CONFIG.nextQuestionDelay);
@@ -537,26 +693,50 @@
     questionIndex++;
   }
 
-  // ── Download Results ───────────────────────────
+  // ── Download Final Results ────────────────────
   console.log("");
   console.log("═══════════════════════════════════════════════");
-  console.log(`Extraction complete! Collected ${collected.length} questions.`);
+  console.log(`Extraction complete! ${collected.length} questions collected.`);
   console.log("═══════════════════════════════════════════════");
 
+  // Summary by section
+  const sectionCounts = {};
+  for (const q of collected) {
+    const key = `${q.section} / ${q.questionType}`;
+    sectionCounts[key] = (sectionCounts[key] || 0) + 1;
+  }
+  console.log("Breakdown:");
+  for (const [key, count] of Object.entries(sectionCounts)) {
+    console.log(`  ${key}: ${count}`);
+  }
+
+  // Count questions with missing data
+  const missingAnswer = collected.filter(
+    (q) => q.correctAnswer === "?",
+  ).length;
+  const missingExplanation = collected.filter((q) => !q.explanation).length;
+  if (missingAnswer > 0)
+    console.log(`⚠ ${missingAnswer} questions with unknown correct answer`);
+  if (missingExplanation > 0)
+    console.log(`⚠ ${missingExplanation} questions without explanation`);
+
   if (collected.length > 0) {
-    const filename = `official-questions-${sectionMapping.section.toLowerCase()}-${Date.now()}.json`;
+    const filename = `official-questions-${collected.length}-${Date.now()}.json`;
     downloadJSON(collected, filename);
-    console.log(`Downloaded: ${filename}`);
+    console.log(`\nDownloaded: ${filename}`);
     console.log("");
     console.log("Next steps:");
-    console.log("1. Move the downloaded file to: data/official-questions.json");
-    console.log("   (merge with any existing data if extracting multiple sections)");
+    console.log(
+      "1. Move downloaded file to: data/official-questions.json",
+    );
+    console.log(
+      "   (or merge with existing: node scripts/merge-extractions.js *.json)",
+    );
     console.log("2. Run: npx tsx scripts/import-official.ts");
   }
 
-  // Also store in window for inspection
   window.__GMATE_EXTRACTED = collected;
-  console.log("Data also available at: window.__GMATE_EXTRACTED");
+  console.log("Data also at: window.__GMATE_EXTRACTED");
 
   return collected;
 })();

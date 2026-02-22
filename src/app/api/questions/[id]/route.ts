@@ -1,10 +1,14 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
+import { requireRequestSession } from "@/lib/auth";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const { response } = await requireRequestSession(request);
+  if (response) return response;
+
   const { id } = await params;
 
   const question = await prisma.question.findUnique({

@@ -9,8 +9,12 @@ import {
   type ReviewQueueItem,
 } from "@/lib/task-selector";
 import { pickQuestion } from "@/lib/question-picker";
+import { requireRequestSession } from "@/lib/auth";
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { response } = await requireRequestSession(request);
+  if (response) return response;
+
   const sessions = await prisma.studySession.findMany({
     orderBy: { startedAt: "desc" },
     take: 20,
@@ -22,6 +26,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const authCheck = await requireRequestSession(request);
+  if (authCheck.response) return authCheck.response;
+
   const body = await request.json();
   const {
     sessionType,
