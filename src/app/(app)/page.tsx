@@ -247,11 +247,15 @@ export default function Dashboard() {
       {/* Study Next CTA */}
       {studyNext && (
         <Card className={`border-2 ${
-          studyNext.taskType === "REVIEW" || studyNext.taskType === "CONSOLIDATION"
+          studyNext.taskType === "REVIEW" ||
+          studyNext.taskType === "CONSOLIDATION" ||
+          studyNext.taskType === "REMEDIATION"
             ? "border-amber-300 bg-amber-50/50 dark:border-amber-700 dark:bg-amber-950/30"
             : studyNext.taskType === "NEW_TOPIC"
               ? "border-blue-300 bg-blue-50/50 dark:border-blue-700 dark:bg-blue-950/30"
-              : "border-emerald-300 bg-emerald-50/50 dark:border-emerald-700 dark:bg-emerald-950/30"
+              : studyNext.taskType === "FLUENCY"
+                ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-700 dark:bg-emerald-950/30"
+                : "border-zinc-300 bg-zinc-50/50 dark:border-zinc-700 dark:bg-zinc-950/30"
         }`}>
           <CardContent className="flex items-center justify-between py-4">
             <div>
@@ -259,6 +263,8 @@ export default function Dashboard() {
               <p className="text-xs text-muted-foreground mt-1">
                 {studyNext.taskType === "REVIEW" ? "Due for review" :
                  studyNext.taskType === "CONSOLIDATION" ? "Consolidation review" :
+                 studyNext.taskType === "REMEDIATION" ? "Targeted prerequisite repair" :
+                 studyNext.taskType === "FLUENCY" ? "Automaticity and fluency drill" :
                  studyNext.taskType === "NEW_TOPIC" ? "New topic to learn" : "Warmup"}
               </p>
             </div>

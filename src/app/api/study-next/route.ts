@@ -1,82 +1,39 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
-import { calculateRetention, calculateUrgency } from "@/lib/spaced-repetition";
-import {
-  selectNextTasks,
-  type TopicWithPrereqs,
-  type TopicMasteryRecord,
-  type ReviewQueueItem,
-} from "@/lib/task-selector";
+import { loadLearningState } from "@/lib/learning-state";
+import { selectNextTasks } from "@/lib/task-selector";
 import { pickQuestion } from "@/lib/question-picker";
-import { requireRequestSession } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
   const count = parseInt(request.nextUrl.searchParams.get("count") ?? "5", 10);
   const topicIdFilter = request.nextUrl.searchParams.get("topicId");
-
-  // Fetch all topics with prerequisites
-  const topics = await prisma.topic.findMany({
-    include: {
-      prerequisites: { select: { id: true, name: true } },
-      prerequisiteOf: { select: { id: true, name: true } },
-    },
-  });
-
-  const allTopics: TopicWithPrereqs[] = topics.map((t) => ({
-    id: t.id,
-    name: t.name,
-    section: t.section,
-    prerequisites: t.prerequisites,
-    prerequisiteOf: t.prerequisiteOf,
-  }));
-
-  // Fetch all mastery records
-  const masteryRecords = await prisma.topicMastery.findMany();
-  const allMastery: TopicMasteryRecord[] = masteryRecords.map((m) => ({
-    topicId: m.topicId,
-    masteryLevel: m.masteryLevel,
-    masteryStage: m.masteryStage,
-    practiceCount: m.practiceCount,
-    accuracy7d: m.accuracy7d,
-    accuracy30d: m.accuracy30d,
-    stabilityFactor: m.stabilityFactor,
-    lastPracticedAt: m.lastPracticedAt,
-    nextReviewAt: m.nextReviewAt,
-  }));
-
-  // Fetch review queue with real-time urgency
   const now = new Date();
-  const queueItems = await prisma.reviewQueue.findMany({
-    include: { topic: { include: { mastery: true } } },
-  });
+  const snapshot = await loadLearningState(now);
 
-  const reviewQueue: ReviewQueueItem[] = queueItems.map((item) => {
-    const mastery = item.topic.mastery;
-    const retention = mastery?.lastPracticedAt
-      ? calculateRetention(mastery.lastPracticedAt, mastery.stabilityFactor, now)
-      : 0;
-    const urgency = calculateUrgency(retention, item.scheduledAt, now);
-    return {
-      topicId: item.topicId,
-      urgency,
-      scheduledAt: item.scheduledAt,
-      intervalMs: item.intervalMs,
-      isDue: now >= item.scheduledAt,
-      retention,
-    };
-  });
-
-  // If filtering to a specific topic, narrow the review queue
   const filteredQueue = topicIdFilter
-    ? reviewQueue.filter((r) => r.topicId === topicIdFilter)
-    : reviewQueue;
+    ? snapshot.reviewQueue.filter((r) => r.topicId === topicIdFilter)
+    : snapshot.reviewQueue;
+  const focusTopic = topicIdFilter
+    ? snapshot.allTopics.find((topic) => topic.id === topicIdFilter)
+    : null;
+  const focusedTopicIds = new Set([
+    ...(topicIdFilter ? [topicIdFilter] : []),
+    ...(focusTopic?.prerequisites.map((prereq) => prereq.id) ?? []),
+  ]);
+  const filteredSignals =
+    focusedTopicIds.size > 0
+      ? snapshot.topicSignals.filter((signal) =>
+          focusedTopicIds.has(signal.topicId)
+        )
+      : snapshot.topicSignals;
 
   // Select tasks
   const tasks = selectNextTasks(
-    { allTopics, allMastery, reviewQueue: filteredQueue },
+    {
+      allTopics: snapshot.allTopics,
+      allMastery: snapshot.allMastery,
+      reviewQueue: filteredQueue,
+      topicSignals: filteredSignals,
+    },
     count,
     now
   );
@@ -93,10 +50,14 @@ export async function GET(request: NextRequest) {
   // Filter out tasks where no question could be found
   const validTasks = resolvedTasks.filter((t) => t.questionId !== null);
 
-  const dueCount = reviewQueue.filter((r) => r.isDue).length;
+  const dueCount = snapshot.reviewQueue.filter((r) => r.isDue).length;
   const frontierCount = tasks.filter((t) => t.taskType === "NEW_TOPIC").length;
   const reviewCount = tasks.filter(
-    (t) => t.taskType === "REVIEW" || t.taskType === "CONSOLIDATION"
+    (t) =>
+      t.taskType === "REVIEW" ||
+      t.taskType === "CONSOLIDATION" ||
+      t.taskType === "REMEDIATION" ||
+      t.taskType === "FLUENCY"
   ).length;
 
   return Response.json({
@@ -110,6 +71,8 @@ export async function GET(request: NextRequest) {
           : 0,
       consolidationsUsed: tasks.filter((t) => t.taskType === "CONSOLIDATION")
         .length,
+      remediationUsed: tasks.filter((t) => t.taskType === "REMEDIATION").length,
+      fluencyUsed: tasks.filter((t) => t.taskType === "FLUENCY").length,
     },
   });
 }

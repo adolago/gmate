@@ -70,70 +70,6 @@ enum ChatRole {
   SYSTEM
 }
 
-// ─── Users ──────────────────────────────────────────────────────────
-
-model User {
-  id            String  @id @default(cuid())
-  email         String  @unique
-  name          String?
-  passwordHash  String? // Legacy field from pre-Better Auth implementation
-  emailVerified Boolean @default(false)
-  image         String?
-
-  authsessions AuthSession[]
-  authaccounts AuthAccount[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
-
-model AuthSession {
-  id        String   @id @default(cuid())
-  expiresAt DateTime
-  token     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  ipAddress String?
-  userAgent String?
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@map("AuthSession")
-}
-
-model AuthAccount {
-  id                    String    @id @default(cuid())
-  accountId             String
-  providerId            String
-  userId                String
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accessToken           String?
-  refreshToken          String?
-  idToken               String?
-  accessTokenExpiresAt  DateTime?
-  refreshTokenExpiresAt DateTime?
-  scope                 String?
-  password              String?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-
-  @@index([userId])
-  @@map("AuthAccount")
-}
-
-model AuthVerification {
-  id         String   @id @default(cuid())
-  identifier String
-  value      String
-  expiresAt  DateTime
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([identifier])
-  @@map("AuthVerification")
-}
-
 // ─── Knowledge Graph ─────────────────────────────────────────────────
 
 model Topic {
@@ -162,6 +98,21 @@ model Topic {
   @@index([section])
 }
 
+model QuestionSource {
+  id              String  @id @default(cuid())
+  slug            String  @unique
+  displayName     String
+  homepageUrl     String?
+  license         String
+  redistributable Boolean @default(false)
+  notes           String?
+
+  questions Question[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // ─── Questions ───────────────────────────────────────────────────────
 
 model Question {
@@ -180,6 +131,13 @@ model Question {
   tableData     Json? // For Table Analysis questions
   sourceSet     Json? // For Multi-Source Reasoning
 
+  // Source provenance
+  sourceId         String?
+  source           QuestionSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  sourceExternalId String?
+  sourceUrl        String?
+  sourceMetadata   Json?
+
   // Topic relation
   topicId String?
   topic   Topic?  @relation(fields: [topicId], references: [id])
@@ -194,6 +152,8 @@ model Question {
   @@index([section, difficulty])
   @@index([section, questionType])
   @@index([topicId])
+  @@index([sourceId])
+  @@unique([sourceId, sourceExternalId])
 }
 
 // ─── Attempts ────────────────────────────────────────────────────────

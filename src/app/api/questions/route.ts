@@ -1,12 +1,8 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { Section, QuestionType, Difficulty } from "@/generated/prisma/client";
-import { requireRequestSession } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
   const { searchParams } = new URL(request.url);
 
   const section = searchParams.get("section") as Section | null;

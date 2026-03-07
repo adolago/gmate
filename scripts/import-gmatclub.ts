@@ -1,6 +1,8 @@
 import "dotenv/config";
 
 /**
+ * DEPRECATED — this importer is not part of the default onboarding path.
+ *
  * Import questions from mister-teddy/gmat-database (GitHub Pages JSON API).
  *
  * Source: https://mister-teddy.github.io/gmat-database/
@@ -98,6 +100,17 @@ async function fetchJson<T>(url: string): Promise<T | null> {
 }
 
 async function main() {
+  if (process.env.GMATE_ALLOW_UNVERIFIED_SOURCES !== "true") {
+    console.error(
+      [
+        "scripts/import-gmatclub.ts is deprecated and blocked by default.",
+        "Reason: the source is unverified for the open-licensed pipeline and does not provide a reliable answer key.",
+        "Set GMATE_ALLOW_UNVERIFIED_SOURCES=true only if you explicitly want to bypass that policy.",
+      ].join("\n")
+    );
+    process.exit(1);
+  }
+
   console.log("Fetching question index from gmat-database...");
   const index = await fetchJson<Record<string, string[]>>(`${BASE_URL}/index.json`);
   if (!index) {

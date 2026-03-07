@@ -1,14 +1,10 @@
 import { prisma } from "@/lib/db";
-import { requireRequestSession } from "@/lib/auth";
 
 /**
  * Export chat conversations as JSONL for Tinker fine-tuning.
  * Each line is a complete conversation with context metadata.
  */
-export async function GET(request: Request) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
+export async function GET() {
   const messages = await prisma.chatMessage.findMany({
     orderBy: { createdAt: "asc" },
     include: {

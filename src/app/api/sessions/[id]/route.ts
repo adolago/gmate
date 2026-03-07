@@ -1,14 +1,10 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireRequestSession } from "@/lib/auth";
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
   const { id } = await params;
 
   const session = await prisma.studySession.findUnique({
@@ -39,9 +35,6 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
   const { id } = await params;
   const body = await request.json();
   const { status } = body;

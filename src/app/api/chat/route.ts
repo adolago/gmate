@@ -9,7 +9,6 @@ import {
   type QuestionContext,
   type StudentContext,
 } from "@/lib/ai-context";
-import { requireRequestSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
   if (!isAIEnabled()) {
@@ -18,9 +17,6 @@ export async function POST(request: NextRequest) {
       { status: 503 }
     );
   }
-
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
 
   const body = await request.json();
   const {

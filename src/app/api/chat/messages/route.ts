@@ -1,12 +1,8 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { ChatRole, Section, Prisma } from "@/generated/prisma/client";
-import { requireRequestSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
   const body = await request.json();
   const {
     messages,
@@ -42,9 +38,6 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
   const { searchParams } = new URL(request.url);
   const questionId = searchParams.get("questionId");
   const sessionId = searchParams.get("sessionId");

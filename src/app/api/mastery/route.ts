@@ -1,11 +1,7 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
-import { requireRequestSession } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
   const topicId = request.nextUrl.searchParams.get("topicId");
 
   if (topicId) {

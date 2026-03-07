@@ -1,11 +1,7 @@
 import { prisma } from "@/lib/db";
 import { calculateRetention, calculateUrgency } from "@/lib/spaced-repetition";
-import { requireRequestSession } from "@/lib/auth";
 
-export async function GET(request: Request) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
+export async function GET() {
   // Get all review queue items with their mastery data
   const items = await prisma.reviewQueue.findMany({
     include: {

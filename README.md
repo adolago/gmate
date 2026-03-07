@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# GMATE
 
-## Getting Started
+GMATE is a Next.js study app for GMAT-style practice with topic mastery, spaced repetition, smart session selection, and an adaptive learning engine.
 
-First, run the development server:
+## Local setup
+
+Install dependencies and start the app:
 
 ```bash
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The app expects Postgres via `DATABASE_URL`. The repo includes a local database definition in `docker-compose.yml`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Question import workflows
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### Open-licensed import: AQuA-RAT
 
-## Learn More
+Use the open-source importer for bridge GMAT-like quant content. The approved source registry currently contains only `aqua-rat`, which is imported as `QUANTITATIVE_REASONING` / `PROBLEM_SOLVING` and tagged as non-official.
 
-To learn more about Next.js, take a look at the following resources:
+Preview the first 200 records without writing anything:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npx tsx scripts/import-open.ts --source aqua-rat --split dev --dry-run --limit 200
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Import a full split once the dry run looks good:
 
-## Deploy on Vercel
+```bash
+npx tsx scripts/import-open.ts --source aqua-rat --split dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Import all approved open sources and all splits:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npx tsx scripts/import-open.ts --source all --split all
+```
+
+The importer will:
+
+- reject sources that are not explicitly redistributable
+- keep low-confidence topic assignments out of the adaptive engine by leaving `topicId = null`
+- preserve source provenance through `QuestionSource`, `sourceExternalId`, `sourceUrl`, and `sourceMetadata`
+
+### Private/licensed import: GMAT Official Guide
+
+For copyrighted material that you have separately licensed or extracted for local use, keep using the private importer:
+
+```bash
+npx tsx scripts/import-official.ts
+```
+
+That script reads `data/official-questions.json`, which is intentionally gitignored.
+
+### Deprecated: gmat-database / GMAT Club importer
+
+`scripts/import-gmatclub.ts` is deprecated and not part of the default onboarding path.
+
+Reason:
+
+- the source is unverified for the open-licensed pipeline
+- the live payloads do not provide a reliable answer key
+- importing it by default would mix legally unclear content into the question bank
+
+The script remains in the repo only as a reference path and is blocked by default unless you explicitly opt in with `GMATE_ALLOW_UNVERIFIED_SOURCES=true`.
+
+## Verification
+
+Useful checks after schema or importer changes:
+
+```bash
+npx prisma generate
+npx tsx scripts/import-open.ts --source aqua-rat --split dev --dry-run --limit 200
+npm run build
+```

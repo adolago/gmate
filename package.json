@@ -7,12 +7,14 @@
     "prebuild": "node scripts/cleanup-legacy-routes.js",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "import:open": "npx tsx scripts/import-open.ts",
+    "import:official": "npx tsx scripts/import-official.ts",
+    "repair:open-imports": "npx tsx scripts/repair-open-imports.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.3.0",
     "@prisma/client": "^7.3.0",
-    "better-auth": "^1.4.18",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.2.4",
@@ -30,7 +32,6 @@
     "seed": "npx tsx prisma/seed.ts"
   },
   "devDependencies": {
-    "@better-auth/cli": "^1.4.18",
     "@tailwindcss/postcss": "^4",
     "@types/katex": "^0.16.8",
     "@types/node": "^20",

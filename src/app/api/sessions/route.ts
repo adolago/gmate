@@ -1,20 +1,11 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { Section, QuestionType, Difficulty, SessionType } from "@/generated/prisma/client";
-import { calculateRetention, calculateUrgency } from "@/lib/spaced-repetition";
-import {
-  selectNextTasks,
-  type TopicWithPrereqs,
-  type TopicMasteryRecord,
-  type ReviewQueueItem,
-} from "@/lib/task-selector";
+import { loadLearningState } from "@/lib/learning-state";
+import { selectNextTasks } from "@/lib/task-selector";
 import { pickQuestion } from "@/lib/question-picker";
-import { requireRequestSession } from "@/lib/auth";
 
-export async function GET(request: Request) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
+export async function GET() {
   const sessions = await prisma.studySession.findMany({
     orderBy: { startedAt: "desc" },
     take: 20,
@@ -26,9 +17,6 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: NextRequest) {
-  const authCheck = await requireRequestSession(request);
-  if (authCheck.response) return authCheck.response;
-
   const body = await request.json();
   const {
     sessionType,
@@ -53,39 +41,12 @@ export async function POST(request: NextRequest) {
   if (useSmartSelection) {
     try {
       const now = new Date();
-      const topics = await prisma.topic.findMany({
-        include: {
-          prerequisites: { select: { id: true, name: true } },
-          prerequisiteOf: { select: { id: true, name: true } },
-        },
-      });
-      const allTopics: TopicWithPrereqs[] = topics.map((t) => ({
-        id: t.id, name: t.name, section: t.section,
-        prerequisites: t.prerequisites, prerequisiteOf: t.prerequisiteOf,
-      }));
-
-      const masteryRecords = await prisma.topicMastery.findMany();
-      const allMastery: TopicMasteryRecord[] = masteryRecords.map((m) => ({
-        topicId: m.topicId, masteryLevel: m.masteryLevel, masteryStage: m.masteryStage,
-        practiceCount: m.practiceCount, accuracy7d: m.accuracy7d, accuracy30d: m.accuracy30d,
-        stabilityFactor: m.stabilityFactor, lastPracticedAt: m.lastPracticedAt, nextReviewAt: m.nextReviewAt,
-      }));
-
-      const queueItems = await prisma.reviewQueue.findMany({
-        include: { topic: { include: { mastery: true } } },
-      });
-      const reviewQueue: ReviewQueueItem[] = queueItems.map((item) => {
-        const m = item.topic.mastery;
-        const retention = m?.lastPracticedAt
-          ? calculateRetention(m.lastPracticedAt, m.stabilityFactor, now) : 0;
-        return {
-          topicId: item.topicId, urgency: calculateUrgency(retention, item.scheduledAt, now),
-          scheduledAt: item.scheduledAt, intervalMs: item.intervalMs,
-          isDue: now >= item.scheduledAt, retention,
-        };
-      });
-
-      const tasks = selectNextTasks({ allTopics, allMastery, reviewQueue }, totalQuestions, now);
+      const snapshot = await loadLearningState(now);
+      const tasks = selectNextTasks(snapshot, totalQuestions * 2, now).filter(
+        (task) =>
+          (!section || task.section === section) &&
+          (!difficulty || task.difficulty === difficulty)
+      );
       const resolvedIds: string[] = [];
       const usedIds = new Set<string>();
 
@@ -94,6 +55,7 @@ export async function POST(request: NextRequest) {
         if (qId) {
           resolvedIds.push(qId);
           usedIds.add(qId);
+          if (resolvedIds.length >= totalQuestions) break;
         }
       }
 

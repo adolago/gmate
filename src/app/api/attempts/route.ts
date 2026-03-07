@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { ErrorType } from "@/generated/prisma/client";
 import { computeMasteryUpdate } from "@/lib/mastery";
+import { loadLearningState } from "@/lib/learning-state";
 import {
   computeNextInterval,
   updateStability,
@@ -9,20 +10,10 @@ import {
 } from "@/lib/spaced-repetition";
 import { computeFIReCredits } from "@/lib/fire";
 import { updateMasteryLevel, getMasteryStage } from "@/lib/mastery";
-import { calculateRetention, calculateUrgency } from "@/lib/spaced-repetition";
-import {
-  selectNextTasks,
-  type TopicWithPrereqs,
-  type TopicMasteryRecord,
-  type ReviewQueueItem,
-} from "@/lib/task-selector";
+import { selectNextTasks } from "@/lib/task-selector";
 import { pickQuestion } from "@/lib/question-picker";
-import { requireRequestSession } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
-  const { response } = await requireRequestSession(request);
-  if (response) return response;
-
   const body = await request.json();
   const {
     questionId,
@@ -117,39 +108,8 @@ export async function POST(request: NextRequest) {
 
     // Get next recommendation
     const now = new Date();
-    const topics = await prisma.topic.findMany({
-      include: {
-        prerequisites: { select: { id: true, name: true } },
-        prerequisiteOf: { select: { id: true, name: true } },
-      },
-    });
-    const allTopics: TopicWithPrereqs[] = topics.map((t) => ({
-      id: t.id, name: t.name, section: t.section,
-      prerequisites: t.prerequisites, prerequisiteOf: t.prerequisiteOf,
-    }));
-
-    const masteryRecords = await prisma.topicMastery.findMany();
-    const allMastery: TopicMasteryRecord[] = masteryRecords.map((m) => ({
-      topicId: m.topicId, masteryLevel: m.masteryLevel, masteryStage: m.masteryStage,
-      practiceCount: m.practiceCount, accuracy7d: m.accuracy7d, accuracy30d: m.accuracy30d,
-      stabilityFactor: m.stabilityFactor, lastPracticedAt: m.lastPracticedAt, nextReviewAt: m.nextReviewAt,
-    }));
-
-    const queueItems = await prisma.reviewQueue.findMany({
-      include: { topic: { include: { mastery: true } } },
-    });
-    const reviewQueue: ReviewQueueItem[] = queueItems.map((item) => {
-      const m = item.topic.mastery;
-      const retention = m?.lastPracticedAt
-        ? calculateRetention(m.lastPracticedAt, m.stabilityFactor, now) : 0;
-      return {
-        topicId: item.topicId, urgency: calculateUrgency(retention, item.scheduledAt, now),
-        scheduledAt: item.scheduledAt, intervalMs: item.intervalMs,
-        isDue: now >= item.scheduledAt, retention,
-      };
-    });
-
-    const tasks = selectNextTasks({ allTopics, allMastery, reviewQueue }, 1, now);
+    const snapshot = await loadLearningState(now);
+    const tasks = selectNextTasks(snapshot, 1, now);
     if (tasks.length > 0) {
       const task = tasks[0];
       const qId = task.questionId ?? await pickQuestion(task.topicId, task.difficulty, [questionId]);
@@ -177,9 +137,16 @@ async function updateTopicMastery(
   timeSpentMs: number
 ) {
   // Get or create mastery record
-  let mastery = await prisma.topicMastery.findUnique({
-    where: { topicId },
-  });
+  const [existingMastery, existingReview] = await Promise.all([
+    prisma.topicMastery.findUnique({
+      where: { topicId },
+    }),
+    prisma.reviewQueue.findUnique({
+      where: { topicId },
+    }),
+  ]);
+
+  let mastery = existingMastery;
 
   if (!mastery) {
     mastery = await prisma.topicMastery.create({
@@ -216,8 +183,9 @@ async function updateTopicMastery(
     update.accuracy7d,
     update.practiceCount
   );
+  const currentIntervalMs = existingReview?.intervalMs ?? 4 * 60 * 60 * 1000;
   const newInterval = computeNextInterval(
-    14400000, // 4 hours default
+    currentIntervalMs,
     update.accuracy7d,
     update.masteryLevel
   );
@@ -270,18 +238,7 @@ async function updateTopicMasteryImplicit(
     where: { topicId },
     data: {
       masteryLevel: newLevel,
-      masteryStage:
-        newLevel >= 0.9
-          ? "FLUENT"
-          : newLevel >= 0.75
-            ? "MASTERED"
-            : newLevel >= 0.5
-              ? "PROFICIENT"
-              : newLevel >= 0.3
-                ? "DEVELOPING"
-                : newLevel >= 0.1
-                  ? "INTRODUCED"
-                  : "UNKNOWN",
+      masteryStage: getMasteryStage(newLevel),
     },
   });
 }
